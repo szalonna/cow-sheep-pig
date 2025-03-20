@@ -40,3 +40,16 @@ jobs:
         with:
           name: dist
           path: dist.zip
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: dist
+      - name: Create a Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist.zip
