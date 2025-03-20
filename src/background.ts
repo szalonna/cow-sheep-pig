@@ -1,90 +1,99 @@
 const CSP_HEADERS = [
-    `content-security-policy`,
-    `content-security-policy-report-only`,
-    `x-webkit-csp`,
-    `x-content-security-policy`,
+	`content-security-policy`,
+	`content-security-policy-report-only`,
+	`x-webkit-csp`,
+	`x-content-security-policy`,
 ];
 
 const { RuleActionType, HeaderOperation, ResourceType } =
-    chrome.declarativeNetRequest;
+	chrome.declarativeNetRequest;
 
-const createRule = (tabIds: number[], index: number): chrome.declarativeNetRequest.Rule => ({
-    id: index,
-    action: {
-        type: RuleActionType.MODIFY_HEADERS,
-        responseHeaders: CSP_HEADERS.map((header) => ({
-            operation: HeaderOperation.REMOVE,
-            header,
-        })),
-    },
-    condition: {
-        tabIds,
-        resourceTypes: [ResourceType.MAIN_FRAME, ResourceType.SUB_FRAME],
-    },
-})
+const getActiveTab = async () => {
+	const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+	if (tabs.length === 0 || tabs[0].id === undefined) {
+		throw new Error("No active tab found");
+	}
+	const activeTab = tabs[0];
 
-chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
-    chrome.action.setBadgeBackgroundColor({ color: "#FF0000", tabId });
+	return activeTab.id;
+};
 
-    if (changeInfo.status === "loading") {
-        chrome.storage.session.get(`tab-${tabId}`, (result) => {
-            if (result[`tab-${tabId}`]) {
-                chrome.action.setBadgeText({ text: "ON", tabId });
-            } else {
-                chrome.action.setBadgeText({ text: "", tabId });
-            }
-        });
-    }
+const updateIcon = (tabId: number, state: "off" | "on" | "processing") => {
+	if (state === "processing") {
+		chrome.action.setBadgeText({ text: "...", tabId });
+		chrome.action.setBadgeBackgroundColor({ color: "#FFA500", tabId });
+		return;
+	}
+
+	chrome.action.setBadgeBackgroundColor({ color: "#FF0000", tabId });
+	if (state === "on") {
+		chrome.action.setBadgeText({ text: "ON", tabId });
+	} else {
+		chrome.action.setBadgeText({ text: "", tabId });
+	}
+};
+
+const createRule = (tabId: number): chrome.declarativeNetRequest.Rule => ({
+	id: tabId,
+	action: {
+		type: RuleActionType.MODIFY_HEADERS,
+		responseHeaders: CSP_HEADERS.map((header) => ({
+			operation: HeaderOperation.REMOVE,
+			header,
+		})),
+	},
+	condition: {
+		tabIds: [tabId],
+		resourceTypes: [ResourceType.MAIN_FRAME, ResourceType.SUB_FRAME],
+	},
 });
 
-chrome.storage.session.onChanged.addListener(async (changes: {
-    [key: string]: chrome.storage.StorageChange;
-}) => {
-    const tabIds: number[] = [];
-    for (const key in changes) {
-        if (key.startsWith("tab-")) {
-            const tabId = parseInt(key.replace("tab-", ""));
-            const enabled = changes[key].newValue;
-            chrome.action.setBadgeBackgroundColor({ color: "#FF0000", tabId });
-            if (enabled) {
-                chrome.action.setBadgeText({ text: "ON", tabId });
-                tabIds.push(tabId);
-            } else {
-                chrome.action.setBadgeText({ text: "", tabId });
-            }
-        }
-    }
+let updating = false;
+const toggleCSPRuleForCurrentTab = async () => {
+	if (updating) {
+		return;
+	}
 
-    if (tabIds.length === 0) {
-        chrome.declarativeNetRequest.updateSessionRules({
-            removeRuleIds: (await chrome.declarativeNetRequest.getSessionRules()).map((rule) => rule.id),
-        });
-        return;
-    }
+	updating = true;
+	const tabId = await getActiveTab();
+	if (!tabId) {
+		updating = false;
+		return;
+	}
+	updateIcon(tabId, "processing");
 
-    const rule = createRule(tabIds, 1);
+	const rules = await chrome.declarativeNetRequest.getSessionRules();
+	const isEnabled = rules.some((rule) => rule.id === tabId);
 
-    chrome.declarativeNetRequest.updateSessionRules({
-        removeRuleIds: (await chrome.declarativeNetRequest.getSessionRules()).map((rule) => rule.id),
-        addRules: [rule],
-    });
+	if (isEnabled) {
+		await chrome.declarativeNetRequest.updateSessionRules({
+			removeRuleIds: [tabId],
+		});
+		updateIcon(tabId, "off");
+	} else {
+		const rule = createRule(tabId);
+		await chrome.declarativeNetRequest.updateSessionRules({
+			addRules: [rule],
+		});
+		updateIcon(tabId, "on");
+	}
+	updating = false;
+};
+
+chrome.tabs.onUpdated.addListener(async (tabId, changeInfo) => {
+	if (changeInfo.status === "loading") {
+		updateIcon(tabId, "processing");
+		const rules = await chrome.declarativeNetRequest.getSessionRules();
+		const isEnabled = rules.some((rule) => rule.id === tabId);
+		updateIcon(tabId, isEnabled ? "on" : "off");
+	}
 });
 
-chrome.storage.session.getKeys(async (keys) => {
-    for (const key of keys) {
-        if (key.startsWith("tab-")) {
-            const tabId = parseInt(key.replace("tab-", ""));
+chrome.tabs.onActivated.addListener(async ({ tabId }) => {
+	updateIcon(tabId, "processing");
+	const rules = await chrome.declarativeNetRequest.getSessionRules();
+	const isEnabled = rules.some((rule) => rule.id === tabId);
+	updateIcon(tabId, isEnabled ? "on" : "off");
+});
 
-            chrome.storage.session.get(key, (result) => {
-                chrome.action.setBadgeBackgroundColor({ color: "#FF0000", tabId });
-                if (result[key]) {
-                    chrome.action.setBadgeText({ text: "ON", tabId });
-                } else {
-                    chrome.action.setBadgeText({ text: "", tabId });
-                }
-            });
-        }
-    }
-
-}
-);
+chrome.action.onClicked.addListener(toggleCSPRuleForCurrentTab);
