@@ -3,8 +3,13 @@
 	"name": "Cow Sheep Pig",
 	"description": "Disable Content Security Policy rules for a specific tab",
 	"version": "1.0",
-	"permissions": ["declarativeNetRequest", "tabs"],
-	"host_permissions": ["http://*/*", "https://*/*"],
+	"permissions": [
+		"declarativeNetRequest"
+	],
+	"host_permissions": [
+		"http://*/*",
+		"https://*/*"
+	],
 	"icons": {
 		"128": "assets/logo.png"
 	},
